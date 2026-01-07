@@ -3,21 +3,25 @@ import json
 import time
 import hmac
 import hashlib
+import secrets
 from io import BytesIO
 import qrcode
 from flask import request, make_response, send_file, Blueprint
 
 from config import (
     STAGE2_PASSWORD_PLAINTEXT, STAGE2_GATE_TTL_SECONDS, STAGE2_GATE_KEY,
-    OTP_WINDOW_SECONDS, USERS
+    OTP_WINDOW_SECONDS, USERS,
+    STAGE2_PIN_QUESTIONS, BIOMETRIC_PATTERN, STAGE2_PROGRESS_KEY
 )
 from utils import render_page, b64url_encode, b64url_decode, new_session
 
 from . import stage2_bp
 
 # =========================================================
-# STAGE 2 LOGIC
+# STAGE 2 MULTI-LAYER MFA LOGIC (4 Layers)
 # =========================================================
+
+# ===== Layer 1: Password Gate =====
 def sign_stage2_gate() -> str:
     payload = {"v": 1, "exp": int(time.time()) + STAGE2_GATE_TTL_SECONDS}
     body = b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
@@ -39,6 +43,75 @@ def has_stage2_gate() -> bool:
     tok = request.cookies.get("s2gate", "")
     return bool(tok) and verify_stage2_gate(tok)
 
+# ===== Progress Token (track which layers completed) =====
+def sign_progress(layers: list) -> str:
+    """layers = [1,2,3,4] means completed layers 1-4"""
+    payload = {"layers": layers, "exp": int(time.time()) + STAGE2_GATE_TTL_SECONDS}
+    body = b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    sig = hmac.new(STAGE2_PROGRESS_KEY, body.encode("utf-8"), hashlib.sha256).digest()
+    return f"{body}.{b64url_encode(sig)}"
+
+def verify_progress(token: str) -> list:
+    """Return list of completed layers, or empty list if invalid"""
+    try:
+        body, sig = token.split(".", 1)
+        expected = hmac.new(STAGE2_PROGRESS_KEY, body.encode("utf-8"), hashlib.sha256).digest()
+        if not hmac.compare_digest(b64url_decode(sig), expected):
+            return []
+        payload = json.loads(b64url_decode(body).decode("utf-8"))
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return []
+        return payload.get("layers", [])
+    except Exception:
+        return []
+
+def get_progress() -> list:
+    tok = request.cookies.get("s2progress", "")
+    return verify_progress(tok) if tok else []
+
+def set_progress_cookie(resp, layers: list):
+    token = sign_progress(layers)
+    resp.set_cookie("s2progress", token, httponly=True, samesite="Lax")
+
+# ===== Layer 2: PIN Challenge (Random Questions) =====
+import random
+
+# Store active questions per session
+ACTIVE_QUESTIONS = {}  # {session_id: question_index}
+
+def get_random_question():
+    """Get a random question from the pool"""
+    return random.choice(STAGE2_PIN_QUESTIONS)
+
+def get_question_for_session():
+    """Get or create question for current session"""
+    # Use gate cookie as session identifier
+    gate = request.cookies.get("s2gate", "")
+    if not gate:
+        return get_random_question()
+    
+    # Check if we already have a question for this session
+    if gate not in ACTIVE_QUESTIONS:
+        question = get_random_question()
+        ACTIVE_QUESTIONS[gate] = question
+    
+    return ACTIVE_QUESTIONS[gate]
+
+def verify_pin(pin: str) -> bool:
+    """Verify answer against current session's question"""
+    question = get_question_for_session()
+    return pin.strip() == question["answer"]
+
+# ===== Layer 3: Biometric Simulation =====
+def generate_biometric_hash(pattern: str) -> str:
+    """Generate expected biometric hash from pattern"""
+    return hashlib.sha256(pattern.encode("utf-8")).hexdigest()[:16]
+
+def verify_biometric(bio_token: str) -> bool:
+    expected = generate_biometric_hash(BIOMETRIC_PATTERN)
+    return bio_token.strip().lower() == expected.lower()
+
+# ===== Layer 4: OTP =====
 def current_otp_code(seed: str, window: int = OTP_WINDOW_SECONDS) -> str:
     t = int(time.time() // window)
     msg = str(t).encode("utf-8")
@@ -97,13 +170,13 @@ def unlock():
 
 @stage2_bp.get('/stage2')
 def index():
-    # ✅ ถ้ายังไม่ unlock ให้ล็อกไว้ก่อน
+    # ✅ Layer 1: Check gate
     if not has_stage2_gate():
         body = """
         <div class="grid">
           <div class="card">
             <h1>🚧 Stage 2 — Locked Gate</h1>
-            <p class="muted">ต้องถอดรหัสจาก Stage 1 ก่อน แล้วเอา Password มาใส่เพื่อ “เปิดด่าน 2”</p>
+            <p class="muted">ต้องถอดรหัสจาก Stage 1 ก่อน แล้วเอา Password มาใส่เพื่อ "เปิดด่าน 2"</p>
             <hr/>
             <div class="row">
               <a class="btn secondary" href="/stage1">Go Stage 1 (Decrypt)</a>
@@ -116,46 +189,239 @@ def index():
               <input name="password" placeholder="paste decrypted password here" />
               <button class="btn" type="submit">Unlock Stage 2</button>
             </form>
-            <small class="muted">เมื่อ Unlock สำเร็จ จะได้ cookie <span class="kbd">s2gate</span> (หมดอายุภายใน ~10 นาที)</small>
+            <small class="muted">เมื่อ Unlock สำเร็จ จะได้ cookie <span class="kbd">s2gate</span></small>
           </div>
         </div>
         """
-        return render_page("Stage 2 — Locked", body, subtitle="MFA Gateway • Stage 1 Password Required"), 401
+        return render_page("Stage 2 — Locked", body, subtitle="3-Layer MFA • Stage 1 Password Required"), 401
 
-    # ✅ ผ่าน gate แล้วค่อยโชว์ OTP + ฟอร์ม MFA (ไม่ต้องกรอกรหัสซ้ำ)
-    body = """
+    # ✅ Check progress
+    progress = get_progress()
+    
+    body = f"""
     <div class="grid">
       <div class="card">
-        <h1>🔐 Stage 2 — Multi-Factor Authentication</h1>
-        <p class="muted">Gate unlocked ✅ • Factor: OTP (QR / HMAC)</p>
+        <h1>🔐 Stage 2 — Multi-Layer Authentication</h1>
+        <p class="muted">3-Layer MFA System: PIN → Biometric → OTP</p>
         <hr/>
         <div class="row">
-          <a class="btn secondary" href="/stage1">Back to Stage 1</a>
-          <a class="btn secondary" href="/stage3/ui">Stage 3 UI</a>
+          <span class="badge {'neon' if 1 in progress else ''}">{'✅' if 1 in progress else '🔒'} Layer 1: PIN</span>
+          <span class="badge {'neon' if 2 in progress else ''}">{'✅' if 2 in progress else '🔒'} Layer 2: Biometric</span>
+          <span class="badge {'neon' if 3 in progress else ''}">{'✅' if 3 in progress else '🔒'} Layer 3: OTP</span>
         </div>
       </div>
 
-      <div class="card half">
-        <h3>OTP QR</h3>
-        <p class="muted">สแกนแล้วจะได้ JSON ที่มี otp + attrs (ใช้ต่อใน Stage 3 ได้)</p>
-        <p><img src="/stage2/otp.png" alt="OTP QR" style="width:100%;max-width:320px;border-radius:14px;border:1px solid #00ffd533;"/></p>
-        <p class="muted">Tip: ถ้าไม่อยากสแกน ให้คำนวณ OTP ตาม HMAC (ตามที่สอนในวิชา)</p>
-      </div>
+"""
 
-      <div class="card half">
-        <h3>Login Console</h3>
-        <form method="post" action="/stage2/login">
-          <label>Username</label>
-          <input name="username" value="fame" />
-          <label>OTP</label>
-          <input name="otp" placeholder="6 digits" />
-          <button class="btn" type="submit">Authenticate</button>
+    # Layer 1: PIN Challenge
+    if 1 not in progress:
+        question = get_question_for_session()
+        body += f"""
+      <div class="card">
+        <h2>🧩 Layer 1 — PIN Challenge</h2>
+        <p class="muted">ตอบคำถามเพื่อยืนยันตัวตน (ตอบเป็นตัวเลข)</p>
+        <div class="alert">
+          <strong>❓ Question:</strong>
+          <p>{question['question']}</p>
+        </div>
+        <form method="post" action="/stage2/layer2">
+          <label>Answer (ตัวเลขเท่านั้น)</label>
+          <input name="pin" placeholder="ตอบเป็นตัวเลข" />
+          <button class="btn" type="submit">Submit Answer</button>
         </form>
-        <small class="muted">เมื่อสำเร็จ ระบบจะสร้าง session cookie <span class="kbd">sid</span></small>
       </div>
+"""
+    # Layer 2: Biometric Simulation
+    elif 2 not in progress:
+        body += f"""
+      <div class="card">
+        <h2>🧬 Layer 2 — Biometric Verification</h2>
+        <p class="muted">ยืนยันตัวตนด้วย "fingerprint hash"</p>
+        <div class="alert">
+          <strong>📋 Pattern Discovery:</strong>
+          <p>ให้คำนวณ SHA-256 hash (16 ตัวแรก) จาก pattern ที่ถูกต้อง</p>
+          <p class="muted">Pattern format: <span class="kbd">MAJOR:UNIVERSITY:YEAR</span></p>
+          <details>
+            <summary>Algorithm hint</summary>
+            <pre>sha256("<pattern>").hexdigest()[:16]</pre>
+          </details>
+        </div>
+        <form method="post" action="/stage2/layer3">
+          <label>Biometric Hash (16 chars)</label>
+          <input name="bio_hash" placeholder="hexadecimal hash" maxlength="16" />
+          <button class="btn" type="submit">Verify Biometric</button>
+        </form>
+      </div>
+"""
+    # Layer 3: OTP (Final)
+    elif 3 not in progress:
+        body += """
+      <div class="card">
+        <h2>⏱️ Layer 3 — Time-based OTP (Final)</h2>
+        <p class="muted">ขั้นตอนสุดท้าย: ยืนยันด้วย OTP</p>
+        
+        <!-- Countdown Timer -->
+        <div class="alert" id="timer-alert">
+          <strong>⏰ เวลาคงเหลือ:</strong>
+          <span id="countdown" style="font-size:1.5em;color:#00ffd5;font-weight:bold;">30</span> วินาที
+          <p class="muted" id="timer-status">OTP จะเปลี่ยนเมื่อหมดเวลา</p>
+        </div>
+        
+        <div class="row">
+          <div class="half">
+            <h3>OTP QR Code</h3>
+            <p><img id="qr-image" src="/stage2/otp.png?t=0" alt="OTP QR" style="width:100%;max-width:320px;border-radius:14px;border:1px solid #00ffd533;"/></p>
+            <p class="muted">สแกนเพื่อดู OTP + attributes</p>
+          </div>
+          <div class="half">
+            <h3>Enter OTP</h3>
+            <form method="post" action="/stage2/login">
+              <input type="hidden" name="username" value="fame" />
+              <label>OTP (6 digits)</label>
+              <input name="otp" id="otp-input" placeholder="000000" maxlength="6" autofocus />
+              <button class="btn" type="submit">Complete Authentication</button>
+            </form>
+            <small class="muted">หรือคำนวณ OTP ด้วย HMAC (seed: server-room-sut-2026, window: 30s)</small>
+          </div>
+        </div>
+      </div>
+      
+      <script>
+        // OTP Timer and Auto-refresh
+        const OTP_WINDOW = 30; // seconds
+        let timeLeft = OTP_WINDOW;
+        let refreshCount = 0;
+        
+        function updateCountdown() {
+          const now = Math.floor(Date.now() / 1000);
+          timeLeft = OTP_WINDOW - (now % OTP_WINDOW);
+          
+          const countdownEl = document.getElementById('countdown');
+          const statusEl = document.getElementById('timer-status');
+          const alertEl = document.getElementById('timer-alert');
+          
+          countdownEl.textContent = timeLeft;
+          
+          // Warning when time is running out
+          if (timeLeft <= 5) {
+            alertEl.style.borderColor = '#ff6b6b';
+            statusEl.textContent = '⚠️ เวลาใกล้หมด! OTP กำลังจะเปลี่ยน';
+            statusEl.style.color = '#ff6b6b';
+          } else if (timeLeft <= 10) {
+            alertEl.style.borderColor = '#ffd93d';
+            statusEl.textContent = '⏰ เวลาเหลือน้อย';
+            statusEl.style.color = '#ffd93d';
+          } else {
+            alertEl.style.borderColor = '#00ffd533';
+            statusEl.textContent = 'OTP จะเปลี่ยนเมื่อหมดเวลา';
+            statusEl.style.color = '';
+          }
+          
+          // Refresh QR when time resets (new window)
+          if (timeLeft === OTP_WINDOW) {
+            refreshQR();
+          }
+        }
+        
+        function refreshQR() {
+          const qrImage = document.getElementById('qr-image');
+          const timestamp = Date.now();
+          qrImage.src = '/stage2/otp.png?t=' + timestamp;
+          refreshCount++;
+          console.log('QR refreshed:', refreshCount);
+        }
+        
+        // Update every second
+        setInterval(updateCountdown, 1000);
+        updateCountdown(); // Initial call
+      </script>
+"""
+    else:
+        # All layers completed!
+        body += """
+      <div class="card">
+        <h1>✅ All Layers Completed!</h1>
+        <p class="muted">คุณผ่านทุกขั้นตอนของ 4-Layer MFA แล้ว</p>
+        <div class="row">
+          <a class="btn" href="/stage3/ui">Go to Stage 3</a>
+          <a class="btn secondary" href="/">Home</a>
+        </div>
+      </div>
+"""
+
+    body += """
     </div>
     """
-    return render_page("Stage 2 — Authentication", body, subtitle="MFA Gateway • OTP Required")
+    return render_page("Stage 2 — 3-Layer MFA", body, subtitle="Advanced Authentication System")
+
+# ===== Layer Handlers =====
+
+@stage2_bp.post('/stage2/layer2')
+def layer2_pin():
+    if not has_stage2_gate():
+        return "Unauthorized", 401
+    
+    pin = request.form.get("pin", "")
+    if not verify_pin(pin):
+        return render_page(
+            "Layer 2 Failed",
+            """
+            <div class="grid">
+              <div class="card">
+                <h1>❌ Answer Incorrect</h1>
+                <p class="muted">ลองใหม่อีกครั้ง</p>
+                <a class="btn" href="/stage2">Back</a>
+              </div>
+            </div>
+            """,
+            subtitle="PIN Challenge Failed"
+        ), 403
+    
+    progress = get_progress()
+    if 1 not in progress:
+        progress.append(1)
+    resp = make_response("", 302)
+    resp.headers["Location"] = "/stage2"
+    set_progress_cookie(resp, progress)
+    return resp
+
+@stage2_bp.post('/stage2/layer3')
+def layer3_biometric():
+    if not has_stage2_gate():
+        return "Unauthorized", 401
+    
+    progress = get_progress()
+    if 1 not in progress:
+        return "Complete Layer 1 first", 403
+    
+    bio_hash = request.form.get("bio_hash", "")
+    if not verify_biometric(bio_hash):
+        expected = generate_biometric_hash(BIOMETRIC_PATTERN)
+        return render_page(
+            "Layer 3 Failed",
+            f"""
+            <div class="grid">
+              <div class="card">
+                <h1>❌ Biometric Mismatch</h1>
+                <p class="muted">Hash ไม่ตรงกับ expected pattern</p>
+                <details>
+                  <summary>Debug hint</summary>
+                  <p>Expected: {expected}</p>
+                  <p>You sent: {bio_hash}</p>
+                </details>
+                <a class="btn" href="/stage2">Back</a>
+              </div>
+            </div>
+            """,
+            subtitle="Biometric Verification Failed"
+        ), 403
+    
+    if 2 not in progress:
+        progress.append(2)
+    resp = make_response("", 302)
+    resp.headers["Location"] = "/stage2"
+    set_progress_cookie(resp, progress)
+    return resp
 
 @stage2_bp.get('/stage2/otp.png')
 def otp_png():
@@ -171,6 +437,10 @@ def login():
     if not has_stage2_gate():
         return "Stage 2 is locked. Unlock with Stage 1 password first.", 401
 
+    progress = get_progress()
+    if 2 not in progress:
+        return "Complete all previous layers first (1-2)", 403
+
     username = request.form.get("username", "").strip()
     otp = request.form.get("otp", "").strip()
 
@@ -180,28 +450,33 @@ def login():
     seed = "server-room-sut-2026"
     expected = current_otp_code(seed)
     if otp != expected:
-        return "OTP invalid.", 403
+        return f"OTP invalid. (Expected: {expected} for debugging)", 403
 
+    # ✅ All layers completed!
+    if 3 not in progress:
+        progress.append(3)
+    
     sid = new_session(username)
     resp = make_response(render_page(
-        "Login success",
+        "Authentication Complete",
         """
         <div class="grid">
           <div class="card">
-            <h1>✅ Authentication Success</h1>
-            <p class="muted">Session issued. Proceed to Authorization lab.</p>
+            <h1>🎉 3-Layer Authentication Success!</h1>
+            <p class="muted">คุณผ่านทั้ง 3 layers: PIN → Biometric → OTP</p>
             <hr/>
             <div class="row">
-              <a class="btn" href="/stage3/ui">Go Stage 3 UI</a>
-              <a class="btn secondary" href="/stage3">Go Stage 3 (JSON)</a>
+              <a class="btn" href="/stage3/ui">Go Stage 3 (Authorization Lab)</a>
+              <a class="btn secondary" href="/stage3">Stage 3 API</a>
               <a class="btn secondary" href="/">Home</a>
             </div>
           </div>
         </div>
         """,
-        subtitle="Access Granted • Session Cookie Generated"
+        subtitle="All Layers Completed • Session Established"
     ))
     resp.set_cookie("sid", sid, httponly=True, samesite="Lax")
-    # optional: ล้าง gate หลังล็อกอิน (กัน reuse)
+    set_progress_cookie(resp, progress)
+    # Clean gate after login (optional)
     resp.delete_cookie("s2gate")
     return resp

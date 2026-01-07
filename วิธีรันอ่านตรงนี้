@@ -1,6 +1,7 @@
 ติดตั้ง Library ที่จำเป็น:
 
 รัน pip install -r requirements.txt 
+รัน pip install pillow
 
 บนโฟลเดอร์ /cyber
 
