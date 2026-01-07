@@ -1,1 +1,7 @@
-รัน python app.py บน โฟลเดอร์ cyber
+ติดตั้ง Library ที่จำเป็น:
+
+pip install -r requirements.txt บน/cyber
+
+รันโปรแกรม:
+
+รัน python app.py บน โฟลเดอร์ /cyber
