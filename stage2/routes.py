@@ -193,7 +193,7 @@ def index():
           </div>
         </div>
         """
-        return render_page("Stage 2 — Locked", body, subtitle="4-Layer MFA • Stage 1 Password Required"), 401
+        return render_page("Stage 2 — Locked", body, subtitle="3-Layer MFA • Stage 1 Password Required"), 401
 
     # ✅ Check progress
     progress = get_progress()
@@ -202,24 +202,23 @@ def index():
     <div class="grid">
       <div class="card">
         <h1>🔐 Stage 2 — Multi-Layer Authentication</h1>
-        <p class="muted">4-Layer MFA System: Password → PIN → Biometric → OTP</p>
+        <p class="muted">3-Layer MFA System: PIN → Biometric → OTP</p>
         <hr/>
         <div class="row">
-          <span class="badge {'neon' if 1 in progress else ''}">✅ Layer 1: Password</span>
-          <span class="badge {'neon' if 2 in progress else ''}">{'✅' if 2 in progress else '🔒'} Layer 2: PIN</span>
-          <span class="badge {'neon' if 3 in progress else ''}">{'✅' if 3 in progress else '🔒'} Layer 3: Biometric</span>
-          <span class="badge {'neon' if 4 in progress else ''}">{'✅' if 4 in progress else '🔒'} Layer 4: OTP</span>
+          <span class="badge {'neon' if 1 in progress else ''}">{'✅' if 1 in progress else '🔒'} Layer 1: PIN</span>
+          <span class="badge {'neon' if 2 in progress else ''}">{'✅' if 2 in progress else '🔒'} Layer 2: Biometric</span>
+          <span class="badge {'neon' if 3 in progress else ''}">{'✅' if 3 in progress else '🔒'} Layer 3: OTP</span>
         </div>
       </div>
 
 """
 
-    # Layer 2: PIN Challenge
-    if 2 not in progress:
+    # Layer 1: PIN Challenge
+    if 1 not in progress:
         question = get_question_for_session()
         body += f"""
       <div class="card">
-        <h2>🧩 Layer 2 — PIN Challenge</h2>
+        <h2>🧩 Layer 1 — PIN Challenge</h2>
         <p class="muted">ตอบคำถามเพื่อยืนยันตัวตน (ตอบเป็นตัวเลข)</p>
         <div class="alert">
           <strong>❓ Question:</strong>
@@ -232,11 +231,11 @@ def index():
         </form>
       </div>
 """
-    # Layer 3: Biometric Simulation
-    elif 3 not in progress:
+    # Layer 2: Biometric Simulation
+    elif 2 not in progress:
         body += f"""
       <div class="card">
-        <h2>🧬 Layer 3 — Biometric Verification</h2>
+        <h2>🧬 Layer 2 — Biometric Verification</h2>
         <p class="muted">ยืนยันตัวตนด้วย "fingerprint hash"</p>
         <div class="alert">
           <strong>📋 Pattern Discovery:</strong>
@@ -254,11 +253,11 @@ def index():
         </form>
       </div>
 """
-    # Layer 4: OTP (Final)
-    elif 4 not in progress:
+    # Layer 3: OTP (Final)
+    elif 3 not in progress:
         body += """
       <div class="card">
-        <h2>⏱️ Layer 4 — Time-based OTP (Final)</h2>
+        <h2>⏱️ Layer 3 — Time-based OTP (Final)</h2>
         <p class="muted">ขั้นตอนสุดท้าย: ยืนยันด้วย OTP</p>
         
         <!-- Countdown Timer -->
@@ -353,7 +352,7 @@ def index():
     body += """
     </div>
     """
-    return render_page("Stage 2 — 4-Layer MFA", body, subtitle="Advanced Authentication System")
+    return render_page("Stage 2 — 3-Layer MFA", body, subtitle="Advanced Authentication System")
 
 # ===== Layer Handlers =====
 
@@ -379,8 +378,8 @@ def layer2_pin():
         ), 403
     
     progress = get_progress()
-    if 2 not in progress:
-        progress.append(2)
+    if 1 not in progress:
+        progress.append(1)
     resp = make_response("", 302)
     resp.headers["Location"] = "/stage2"
     set_progress_cookie(resp, progress)
@@ -392,8 +391,8 @@ def layer3_biometric():
         return "Unauthorized", 401
     
     progress = get_progress()
-    if 2 not in progress:
-        return "Complete Layer 2 first", 403
+    if 1 not in progress:
+        return "Complete Layer 1 first", 403
     
     bio_hash = request.form.get("bio_hash", "")
     if not verify_biometric(bio_hash):
@@ -417,8 +416,8 @@ def layer3_biometric():
             subtitle="Biometric Verification Failed"
         ), 403
     
-    if 3 not in progress:
-        progress.append(3)
+    if 2 not in progress:
+        progress.append(2)
     resp = make_response("", 302)
     resp.headers["Location"] = "/stage2"
     set_progress_cookie(resp, progress)
@@ -439,8 +438,8 @@ def login():
         return "Stage 2 is locked. Unlock with Stage 1 password first.", 401
 
     progress = get_progress()
-    if 3 not in progress:
-        return "Complete all previous layers first (1-3)", 403
+    if 2 not in progress:
+        return "Complete all previous layers first (1-2)", 403
 
     username = request.form.get("username", "").strip()
     otp = request.form.get("otp", "").strip()
@@ -454,8 +453,8 @@ def login():
         return f"OTP invalid. (Expected: {expected} for debugging)", 403
 
     # ✅ All layers completed!
-    if 4 not in progress:
-        progress.append(4)
+    if 3 not in progress:
+        progress.append(3)
     
     sid = new_session(username)
     resp = make_response(render_page(
@@ -463,8 +462,8 @@ def login():
         """
         <div class="grid">
           <div class="card">
-            <h1>🎉 4-Layer Authentication Success!</h1>
-            <p class="muted">คุณผ่านทั้ง 4 layers: Password → PIN → Biometric → OTP</p>
+            <h1>🎉 3-Layer Authentication Success!</h1>
+            <p class="muted">คุณผ่านทั้ง 3 layers: PIN → Biometric → OTP</p>
             <hr/>
             <div class="row">
               <a class="btn" href="/stage3/ui">Go Stage 3 (Authorization Lab)</a>
