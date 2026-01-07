@@ -1,8 +1,8 @@
-
 import json
 import time
 import hmac
 import hashlib
+import base64
 from typing import Tuple, Optional
 from flask import request, jsonify, Blueprint
 from dataclasses import dataclass
@@ -15,7 +15,7 @@ from utils import render_page, b64url_encode, b64url_decode, require_session, is
 from . import stage3_bp
 
 # =========================================================
-# STAGE 3 LOGIC
+# STAGE 3 LOGIC: CIRCUIT DECODER
 # =========================================================
 @dataclass
 class Permit:
@@ -50,26 +50,52 @@ def verify_permit(token: str) -> Optional[dict]:
     except Exception:
         return None
 
-def stage3_policy_check(user: dict, action: str, resource: str, attrs: dict) -> Tuple[bool, str]:
+def check_circuit_status(attrs: dict) -> dict:
     """
-    Rule-based + ABAC + MLS
-    - target: flag/read
-    - require attrs: location=SUT-F1, clearance=SECRET
-    - MLS: user clearance >= SECRET
+    ตรวจสอบรหัสปลดล็อกวงจรทีละชั้น (Circuit Breakers)
+    ผู้เล่นต้องส่งค่าที่ Decode แล้วมาให้ถูกต้อง
     """
-    if resource != "flag" or action != "read":
-        return False, "Unknown policy target."
+    status = {
+        "b1": False, # Breaker 1: RBAC Override
+        "b2": False, # Breaker 2: MLS Override
+        "b3": False, # Breaker 3: Master PIN
+        "all_pass": False,
+        "logs": []
+    }
+    
+    # --- BREAKER 1: RBAC OVERRIDE ---
+    # Hint: TUFJTlRfT1ZFUlJJREU=  => Decode ได้ "MAINT_OVERRIDE"
+    code1 = attrs.get("code_1", "").strip()
+    if code1 == "MAINT_OVERRIDE":
+        status["b1"] = True
+        status["logs"].append("✅ Breaker 1 (RBAC): Bypassed via Maintenance Code.")
+    else:
+        status["logs"].append("❌ Breaker 1 (RBAC): Locked. Invalid Override Code.")
 
-    if attrs.get("location") != "SUT-F1":
-        return False, "Policy: location mismatch."
+    # --- BREAKER 2: MLS OVERRIDE ---
+    # Hint: UEhZU0lDQUxfQUNDRVNT => Decode ได้ "PHYSICAL_ACCESS"
+    code2 = attrs.get("code_2", "").strip()
+    if code2 == "PHYSICAL_ACCESS":
+        status["b2"] = True
+        status["logs"].append("✅ Breaker 2 (MLS): Bypassed via Physical Access Code.")
+    else:
+        status["logs"].append("❌ Breaker 2 (MLS): Locked. Invalid Access Code.")
 
-    if attrs.get("clearance") != "SECRET":
-        return False, "Policy: clearance attribute mismatch."
+    # --- BREAKER 3: MASTER SWITCH ---
+    # Hint: Nzc4OA== => Decode ได้ "7788"
+    code3 = attrs.get("code_3", "").strip()
+    if code3 == "7788":
+        status["b3"] = True
+        status["logs"].append("✅ Breaker 3 (Master): PIN Verified.")
+    else:
+        status["logs"].append("❌ Breaker 3 (Master): Locked. Invalid PIN.")
 
-    if not clearance_at_least(user.get("clearance", "PUBLIC"), "SECRET"):
-        return False, "MLS: user clearance too low."
-
-    return True, "Policy satisfied."
+    # FINAL CHECK
+    if status["b1"] and status["b2"] and status["b3"]:
+        status["all_pass"] = True
+        status["logs"].append("🎉 SYSTEM UNLOCKED: Emergency Permit Generated.")
+    
+    return status
 
 # =========================================================
 # ROUTES
@@ -78,21 +104,14 @@ def stage3_policy_check(user: dict, action: str, resource: str, attrs: dict) -> 
 @stage3_bp.get('/stage3')
 def index():
     sess, err = require_session()
-    if err:
-        return err[0], err[1]
-
-    role = sess["role"]
-    if not is_allowed(role, "stage3.dashboard"):
-        return jsonify({"ok": False, "error": "Access Denied"}), 403
-
+    if err: return err[0], err[1]
+    
     return jsonify({
         "ok": True,
-        "msg": "Stage 3 dashboard",
-        "you": sess,
+        "msg": "Circuit Decoder Dashboard",
         "endpoints": {
-            "policy": "/stage3/policy",
-            "request_permit": "POST /stage3/request-permit (JSON)",
-            "read_flag": "GET /stage3/flag (optional header: X-Permit)",
+            "ui": "/stage3/ui",
+            "test_circuit": "POST /stage3/request-permit"
         }
     })
 
@@ -100,142 +119,236 @@ def index():
 def ui():
     sess, err = require_session()
     if err:
-        return render_page(
-            "Stage 3 — Unauthorized",
-            """
-            <div class="grid">
-              <div class="card">
-                <h1>⛔ Not logged in</h1>
-                <p class="muted">คุณต้องผ่าน Stage 2 ก่อน เพื่อได้ session cookie</p>
-                <div class="row">
-                  <a class="btn" href="/stage2">Go Stage 2</a>
-                  <a class="btn secondary" href="/">Home</a>
-                </div>
-              </div>
-            </div>
-            """,
-            subtitle="Authorization Lab • Session Required"
-        ), 401
+        return render_page("Stage 3", "<h1>Not logged in</h1>", "Error"), 401
 
     role = sess["role"]
+    
+    script_content = """
+    <script>
+    function testCircuit() {
+        var c1 = document.getElementById('inp-c1').value;
+        var c2 = document.getElementById('inp-c2').value;
+        var c3 = document.getElementById('inp-c3').value;
+        var btn = document.getElementById('btn-test');
+        
+        btn.innerText = 'Testing Circuits...';
+        btn.disabled = true;
+
+        fetch('/stage3/request-permit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'read',
+                resource: 'flag',
+                attrs: { 
+                    code_1: c1, 
+                    code_2: c2,
+                    code_3: c3
+                }
+            })
+        })
+        .then(r => r.json())
+        .then(d => {
+            btn.disabled = false;
+            btn.innerText = '⚡ TEST CONNECTION';
+            
+            // Update Lights
+            setLight('l1', d.status.b1);
+            setLight('l2', d.status.b2);
+            setLight('l3', d.status.b3);
+            
+            // Show Logs
+            var logHtml = d.logs.map(l => {
+                return `<div style="color:${l.includes('✅')?'#2ecc71':'#e74c3c'}">${l}</div>`;
+            }).join('');
+            document.getElementById('log-box').innerHTML = logHtml;
+
+            if(d.ok) {
+                document.getElementById('permit-result').value = d.permit;
+                document.getElementById('final-box').style.display = 'block';
+                document.getElementById('final-box').scrollIntoView({behavior:'smooth'});
+            }
+        });
+    }
+
+    function setLight(id, on) {
+        var el = document.getElementById(id);
+        if(on) {
+            el.style.backgroundColor = '#2ecc71';
+            el.style.boxShadow = '0 0 15px #2ecc71';
+            el.innerText = 'ON';
+        } else {
+            el.style.backgroundColor = '#c0392b';
+            el.style.boxShadow = 'none';
+            el.innerText = 'OFF';
+        }
+    }
+
+    function getFlag() {
+        var token = document.getElementById('permit-result').value;
+        fetch('/stage3/flag', { headers: {'X-Permit': token} })
+        .then(r => r.json())
+        .then(d => {
+            if(d.ok) {
+                document.getElementById('flag-result').innerHTML = 
+                '<div class="card" style="background:#2ecc71; color:white; margin-top:15px; text-align:center;"><h1>🚩 '+d.flag+'</h1></div>';
+            } else {
+                alert(d.error);
+            }
+        });
+    }
+    </script>
+    <style>
+        .light { 
+            width:60px; height:60px; border-radius:50%; 
+            background:#c0392b; border:3px solid #333; margin:0 auto;
+            display:flex; align-items:center; justify-content:center;
+            font-weight:bold; color:#000; font-size:12px; transition:0.3s;
+        }
+        .breaker-box {
+            background:#111; border:1px solid #333; padding:15px; border-radius:8px;
+            text-align:center; position:relative; overflow:hidden;
+        }
+        .wire {
+            position:absolute; top:50%; width:20px; height:4px; background:#444;
+        }
+        .code-display {
+            font-family:monospace; background:#000; color:#00ffd5; padding:4px 8px; border-radius:4px;
+            display:inline-block; border:1px solid #00ffd533; font-size:1.1em; letter-spacing:1px;
+        }
+    </style>
+    """
+
     body = f"""
+    {script_content}
     <div class="grid">
       <div class="card">
-        <h1>🧾 Stage 3 — Authorization Lab</h1>
-        <p class="muted">RBAC + Access Control Matrix + ABAC/Rule + MLS</p>
-        <hr/>
+        <h1>⚡ Stage 3: Security Circuit Decoder</h1>
         <div class="row">
-          <span class="badge neon">role: {role}</span>
-          <span class="badge">dept: {sess.get("dept")}</span>
-          <span class="badge pink">clearance: {sess.get("clearance")}</span>
+          <span class="badge neon">Role: {role}</span>
+          <span class="badge pink">Clearance: {sess.get("clearance")}</span>
         </div>
-      </div>
-
-      <div class="card half">
-        <h3>Access Control Matrix</h3>
-        <pre id="acm">{json.dumps(ACCESS_MATRIX, indent=2)}</pre>
-        <button class="btn secondary" id="acm-btn" onclick="copyText('acm')">Copy</button>
-      </div>
-
-      <div class="card half">
-        <h3>Policy (ABAC/Rule + MLS)</h3>
-        <pre id="pol">{json.dumps({
-          "target": {"resource":"flag","action":"read"},
-          "require_attrs": {"location":"SUT-F1","clearance":"SECRET"},
-          "mls_requirement": "user clearance >= SECRET",
-          "permit_ttl_sec": 60
-        }, indent=2)}</pre>
-        <button class="btn secondary" id="pol-btn" onclick="copyText('pol')">Copy</button>
+        <p class="muted">
+           <b>Objective:</b> The security system has 3 layers. You must <b>DECODE</b> the bypass signal for each layer
+           to turn the lights GREEN and unlock the Master Switch.
+        </p>
       </div>
 
       <div class="card">
-        <h3>How to request permit</h3>
-        <p class="muted">ส่ง JSON ไปที่ <span class="kbd">POST /stage3/request-permit</span></p>
-        <pre id="req">curl -X POST http://localhost:5000/stage3/request-permit \\
-  -H "Content-Type: application/json" \\
-  -d '{{"action":"read","resource":"flag","attrs":{{"location":"SUT-F1","clearance":"SECRET"}}}}'</pre>
-        <div class="row">
-          <button class="btn secondary" id="req-btn" onclick="copyText('req')">Copy</button>
-          <a class="btn secondary" href="/stage3/policy">Open /stage3/policy (JSON)</a>
-          <a class="btn pink" href="/stage3/flag">Try read flag (needs X-Permit)</a>
+        <h3>🔌 System Status Panel</h3>
+        <div class="grid" style="grid-template-columns: 1fr 1fr 1fr; gap:10px;">
+            <div class="breaker-box">
+                <div id="l1" class="light">OFF</div>
+                <div style="margin-top:10px; color:#aaa;">Breaker 1</div>
+                <div style="font-size:0.8em; color:#666;">RBAC</div>
+            </div>
+            <div class="breaker-box">
+                <div id="l2" class="light">OFF</div>
+                <div style="margin-top:10px; color:#aaa;">Breaker 2</div>
+                <div style="font-size:0.8em; color:#666;">MLS</div>
+            </div>
+            <div class="breaker-box">
+                <div id="l3" class="light">OFF</div>
+                <div style="margin-top:10px; color:#aaa;">Breaker 3</div>
+                <div style="font-size:0.8em; color:#666;">MASTER</div>
+            </div>
         </div>
-        <p class="muted">ได้ permit แล้วให้ยิง <span class="kbd">GET /stage3/flag</span> พร้อม header <span class="kbd">X-Permit</span></p>
       </div>
+
+      <div class="card half">
+        <h3>1. RBAC Override Signal</h3>
+        <p class="muted">Decode this Base64 string to bypass Role check:</p>
+        <div style="text-align:center; margin:10px;">
+            <span class="code-display">TUFJTlRfT1ZFUlJJREU=</span>
+        </div>
+        <input type="text" id="inp-c1" placeholder="Enter Decoded Text..." style="text-align:center;">
+        
+        <hr>
+        
+        <h3>2. MLS Override Signal</h3>
+        <p class="muted">Decode this Base64 string to bypass Clearance check:</p>
+        <div style="text-align:center; margin:10px;">
+            <span class="code-display">UEhZU0lDQUxfQUNDRVNT</span>
+        </div>
+        <input type="text" id="inp-c2" placeholder="Enter Decoded Text..." style="text-align:center;">
+      </div>
+
+      <div class="card half">
+        <h3>3. Master PIN</h3>
+        <p class="muted">Decode this Base64 PIN to unlock the flag vault:</p>
+        <div style="text-align:center; margin:10px;">
+            <span class="code-display">Nzc4OA==</span>
+        </div>
+        <input type="text" id="inp-c3" placeholder="Enter Decoded PIN..." style="text-align:center; letter-spacing:5px; font-size:1.2em;">
+        
+        <div style="margin-top:20px;">
+            <button class="btn" id="btn-test" onclick="testCircuit()" style="width:100%; height:50px; font-size:1.1em;">
+                ⚡ TEST CONNECTION
+            </button>
+        </div>
+        
+        <div id="log-box" style="margin-top:15px; background:#000; padding:10px; font-family:monospace; font-size:0.9em; border-radius:5px; min-height:80px;">
+            <div style="color:#555">System Ready... Waiting for input.</div>
+        </div>
+      </div>
+
+      <div class="card" id="final-box" style="display:none; border: 2px solid #2ecc71;">
+        <h3 style="color:#2ecc71;">🔓 Access Granted</h3>
+        <p>All circuits bypassed. Emergency Token generated.</p>
+        <input type="text" id="permit-result" readonly style="width:100%; background:#222; color:#fff; padding:5px; margin-bottom:10px;">
+        <button class="btn pink" onclick="getFlag()" style="width:100%;">🚩 Retrieve Flag</button>
+        <div id="flag-result"></div>
+      </div>
+
     </div>
     """
-    return render_page("Stage 3 — Authorization", body, subtitle="Permit-Based Access • Enforced by Policy Engine")
-
-@stage3_bp.get('/stage3/policy')
-def policy():
-    sess, err = require_session()
-    if err:
-        return err[0], err[1]
-
-    return jsonify({
-        "ok": True,
-        "rbac_roles": ROLES,
-        "access_control_matrix": ACCESS_MATRIX,
-        "rule_based_policy": {
-            "target": {"resource": "flag", "action": "read"},
-            "require_attrs": {"location": "SUT-F1", "clearance": "SECRET"},
-            "mls_requirement": "user clearance >= SECRET",
-            "note": "Students need a permit; admins can read directly.",
-        }
-    })
+    return render_page("Stage 3 - Circuit Decoder", body, "Authorization & Encoding Puzzle")
 
 @stage3_bp.post('/stage3/request-permit')
 def request_permit():
     sess, err = require_session()
-    if err:
-        return err[0], err[1]
-
-    role = sess["role"]
-    if not is_allowed(role, "permit.request"):
-        return jsonify({"ok": False, "error": "Access Denied"}), 403
+    if err: return err[0], err[1]
 
     data = request.get_json(silent=True) or {}
-    action = data.get("action")
-    resource = data.get("resource")
     attrs = data.get("attrs") or {}
 
-    ok, reason = stage3_policy_check(sess, action, resource, attrs)
-    if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
-
-    p = Permit(
-        sub=sess["sub"],
-        action=action,
-        resource=resource,
-        attrs=attrs,
-        exp=int(time.time()) + 60,
-    )
-    token = sign_permit(p)
-    return jsonify({"ok": True, "permit": token, "exp_in_sec": 60})
+    # ตรวจสอบ Logic ทั้ง 3 ชั้น
+    status = check_circuit_status(attrs)
+    
+    if status["all_pass"]:
+        # ถ้าผ่านหมด ให้ Permit
+        p = Permit(
+            sub=sess["sub"],
+            action="read",
+            resource="flag",
+            attrs=attrs,
+            exp=int(time.time()) + 60,
+        )
+        token = sign_permit(p)
+        return jsonify({
+            "ok": True, 
+            "permit": token, 
+            "status": status, 
+            "logs": status["logs"]
+        })
+    else:
+        # ถ้าไม่ผ่าน ให้ส่ง Status กลับไปเปลี่ยนสีไฟ (แต่ไม่ให้ Permit)
+        return jsonify({
+            "ok": False, 
+            "error": "Circuit Locked", 
+            "status": status, 
+            "logs": status["logs"]
+        }), 403
 
 @stage3_bp.get('/stage3/flag')
 def get_flag():
     sess, err = require_session()
-    if err:
-        return err[0], err[1]
-
-    role = sess["role"]
-
-    # Admin ผ่าน RBAC ได้เลย
-    if is_allowed(role, "flag.read"):
-        return jsonify({"ok": True, "flag": FLAG, "by": "RBAC(admin)"}), 200
-
-    # Student ต้องมี permit
+    if err: return err[0], err[1]
+    
     permit = request.headers.get("X-Permit", "").strip()
-    if not permit:
-        return jsonify({"ok": False, "error": "Admins only OR provide X-Permit."}), 403
-
+    if not permit: return jsonify({"ok": False, "error": "Missing Token"}), 403
+    
     payload = verify_permit(permit)
-    if not payload:
-        return jsonify({"ok": False, "error": "Invalid/expired permit."}), 403
+    if not payload: return jsonify({"ok": False, "error": "Invalid Token"}), 403
 
-    if payload.get("sub") != sess["sub"]:
-        return jsonify({"ok": False, "error": "Permit subject mismatch."}), 403
-    if payload.get("resource") != "flag" or payload.get("action") != "read":
-        return jsonify({"ok": False, "error": "Permit scope mismatch."}), 403
-
-    return jsonify({"ok": True, "flag": FLAG, "by": "Permit(ABAC+MLS)"}), 200
+    return jsonify({"ok": True, "flag": FLAG, "by": "Circuit Decoder (ABAC+Rule)"}), 200
