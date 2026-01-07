@@ -11,15 +11,11 @@ from flask import request, make_response, send_file, Blueprint
 from config import (
     STAGE2_PASSWORD_PLAINTEXT, STAGE2_GATE_TTL_SECONDS, STAGE2_GATE_KEY,
     OTP_WINDOW_SECONDS, USERS,
-    STAGE2_PIN_QUESTIONS, BIOMETRIC_PATTERN, STAGE2_PROGRESS_KEY
+    STAGE2_PIN_QUESTIONS, SUT_COORDINATES, MAX_DISTANCE_KM, STAGE2_PROGRESS_KEY
 )
 from utils import render_page, b64url_encode, b64url_decode, new_session
-
 from . import stage2_bp
-
-# =========================================================
-# STAGE 2 MULTI-LAYER MFA LOGIC (4 Layers)
-# =========================================================
+import math
 
 # ===== Layer 1: Password Gate =====
 def sign_stage2_gate() -> str:
@@ -102,16 +98,25 @@ def verify_pin(pin: str) -> bool:
     question = get_question_for_session()
     return pin.strip() == question["answer"]
 
-# ===== Layer 3: Biometric Simulation =====
-def generate_biometric_hash(pattern: str) -> str:
-    """Generate expected biometric hash from pattern"""
-    return hashlib.sha256(pattern.encode("utf-8")).hexdigest()[:16]
+# ===== Layer 2: Location Verification =====
+def haversine(lat1, lon1, lat2, lon2):
+    """Calculate distance (km) between two points using Haversine formula"""
+    R = 6371  # Earth radius in km
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2) * math.sin(dlat/2) + \
+        math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * \
+        math.sin(dlon/2) * math.sin(dlon/2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
-def verify_biometric(bio_token: str) -> bool:
-    expected = generate_biometric_hash(BIOMETRIC_PATTERN)
-    return bio_token.strip().lower() == expected.lower()
+def verify_location(lat: float, lon: float) -> tuple[bool, float]:
+    """Check if location is within range. Returns (is_valid, distance_km)"""
+    target_lat, target_lon = SUT_COORDINATES
+    dist = haversine(lat, lon, target_lat, target_lon)
+    return dist <= MAX_DISTANCE_KM, dist
 
-# ===== Layer 4: OTP =====
+# ===== Layer 3: OTP =====
 def current_otp_code(seed: str, window: int = OTP_WINDOW_SECONDS) -> str:
     t = int(time.time() // window)
     msg = str(t).encode("utf-8")
@@ -134,7 +139,6 @@ def make_otp_qr_png(seed: str) -> bytes:
     bio = BytesIO()
     img.save(bio, format="PNG")
     return bio.getvalue()
-
 
 # =========================================================
 # ROUTES
@@ -170,8 +174,11 @@ def unlock():
 
 @stage2_bp.get('/stage2')
 def index():
-    # ✅ Layer 1: Check gate
+    # ... (Gate check) ...
     if not has_stage2_gate():
+        # ... (Locked gate UI) ...
+        # (This part is inside index function but simplified in replacement due to context limit, 
+        #  Use existing gate check logic logic)
         body = """
         <div class="grid">
           <div class="card">
@@ -202,11 +209,11 @@ def index():
     <div class="grid">
       <div class="card">
         <h1>🔐 Stage 2 — Multi-Layer Authentication</h1>
-        <p class="muted">3-Layer MFA System: PIN → Biometric → OTP</p>
+        <p class="muted">3-Layer MFA System: PIN → Location → OTP</p>
         <hr/>
         <div class="row">
           <span class="badge {'neon' if 1 in progress else ''}">{'✅' if 1 in progress else '🔒'} Layer 1: PIN</span>
-          <span class="badge {'neon' if 2 in progress else ''}">{'✅' if 2 in progress else '🔒'} Layer 2: Biometric</span>
+          <span class="badge {'neon' if 2 in progress else ''}">{'✅' if 2 in progress else '🔒'} Layer 2: Location</span>
           <span class="badge {'neon' if 3 in progress else ''}">{'✅' if 3 in progress else '🔒'} Layer 3: OTP</span>
         </div>
       </div>
@@ -231,26 +238,67 @@ def index():
         </form>
       </div>
 """
-    # Layer 2: Biometric Simulation
+    # Layer 2: Location Verification
     elif 2 not in progress:
         body += f"""
       <div class="card">
-        <h2>🧬 Layer 2 — Biometric Verification</h2>
-        <p class="muted">ยืนยันตัวตนด้วย "fingerprint hash"</p>
+        <h2>📍 Layer 2 — Location Verification</h2>
+        <p class="muted">ยืนยันว่าคุณอยู่ในพื้นที่ มหาวิทยาลัยเทคโนโลยีสุรนารี</p>
         <div class="alert">
-          <strong>📋 Pattern Discovery:</strong>
-          <p>ให้คำนวณ SHA-256 hash (16 ตัวแรก) จาก pattern ที่ถูกต้อง</p>
-          <p class="muted">Pattern format: <span class="kbd">MAJOR:UNIVERSITY:YEAR</span></p>
-          <details>
-            <summary>Algorithm hint</summary>
-            <pre>sha256("<pattern>").hexdigest()[:16]</pre>
-          </details>
+          <strong>📡 GPS Check:</strong>
+          <p>ระบบจะขอเข้าถึงตำแหน่งของคุณเพื่อตรวจสอบว่าอยู่ในรัศมี {MAX_DISTANCE_KM} กม. จาก มทส. หรือไม่</p>
         </div>
-        <form method="post" action="/stage2/layer3">
-          <label>Biometric Hash (16 chars)</label>
-          <input name="bio_hash" placeholder="hexadecimal hash" maxlength="16" />
-          <button class="btn" type="submit">Verify Biometric</button>
+        <form id="locForm" method="post" action="/stage2/layer3">
+          <input type="hidden" name="lat" id="latInput" />
+          <input type="hidden" name="lon" id="lonInput" />
+          <div id="statusMsg" class="muted" style="margin-bottom:1rem;">Click button to verify location...</div>
+          <button class="btn" type="button" onclick="getLocation()">📍 Check My Location</button>
+          
+          <!-- Fallback for manual testing (optional) -->
+          <details style="margin-top:1rem;">
+             <summary>Manual Input (Debug)</summary>
+             <small class="muted">Use specific coordinates near SUT</small>
+             <input name="manual_lat" placeholder="Latitude" style="margin-top:5px;"/>
+             <input name="manual_lon" placeholder="Longitude" style="margin-top:5px;"/>
+             <button class="btn secondary" type="submit">Submit Manual</button>
+          </details>
         </form>
+        
+        <script>
+        function getLocation() {{
+            const status = document.getElementById("statusMsg");
+            if (navigator.geolocation) {{
+                status.textContent = "⏳ Requesting location access...";
+                navigator.geolocation.getCurrentPosition(showPosition, showError);
+            }} else {{
+                status.textContent = "❌ Geolocation is not supported by this browser.";
+            }}
+        }}
+
+        function showPosition(position) {{
+            document.getElementById("latInput").value = position.coords.latitude;
+            document.getElementById("lonInput").value = position.coords.longitude;
+            document.getElementById("statusMsg").textContent = "✅ Location acquired! Submitting...";
+            document.getElementById("locForm").submit();
+        }}
+
+        function showError(error) {{
+            switch(error.code) {{
+                case error.PERMISSION_DENIED:
+                    document.getElementById("statusMsg").textContent = "❌ User denied the request for Geolocation.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    document.getElementById("statusMsg").textContent = "❌ Location information is unavailable.";
+                    break;
+                case error.TIMEOUT:
+                    document.getElementById("statusMsg").textContent = "❌ The request to get user location timed out.";
+                    break;
+                case error.UNKNOWN_ERROR:
+                    document.getElementById("statusMsg").textContent = "❌ An unknown error occurred.";
+                    break;
+            }}
+        }}
+        </script>
       </div>
 """
     # Layer 3: OTP (Final)
@@ -341,7 +389,7 @@ def index():
         body += """
       <div class="card">
         <h1>✅ All Layers Completed!</h1>
-        <p class="muted">คุณผ่านทุกขั้นตอนของ 4-Layer MFA แล้ว</p>
+        <p class="muted">คุณผ่านทุกขั้นตอนของ 3-Layer MFA แล้ว</p>
         <div class="row">
           <a class="btn" href="/stage3/ui">Go to Stage 3</a>
           <a class="btn secondary" href="/">Home</a>
@@ -384,9 +432,8 @@ def layer2_pin():
     resp.headers["Location"] = "/stage2"
     set_progress_cookie(resp, progress)
     return resp
-
 @stage2_bp.post('/stage2/layer3')
-def layer3_biometric():
+def layer3_location():
     if not has_stage2_gate():
         return "Unauthorized", 401
     
@@ -394,26 +441,39 @@ def layer3_biometric():
     if 1 not in progress:
         return "Complete Layer 1 first", 403
     
-    bio_hash = request.form.get("bio_hash", "")
-    if not verify_biometric(bio_hash):
-        expected = generate_biometric_hash(BIOMETRIC_PATTERN)
+    try:
+        # Try to get from hidden inputs first, else manual inputs
+        lat_str = request.form.get("lat") or request.form.get("manual_lat")
+        lon_str = request.form.get("lon") or request.form.get("manual_lon")
+        
+        if not lat_str or not lon_str:
+            raise ValueError("Missing coordinates")
+            
+        lat = float(lat_str)
+        lon = float(lon_str)
+    except ValueError:
+        return "Invalid coordinates provided", 400
+
+    is_valid, dist = verify_location(lat, lon)
+    
+    if not is_valid:
         return render_page(
-            "Layer 3 Failed",
+            "Layer 2 Failed",
             f"""
             <div class="grid">
               <div class="card">
-                <h1>❌ Biometric Mismatch</h1>
-                <p class="muted">Hash ไม่ตรงกับ expected pattern</p>
-                <details>
-                  <summary>Debug hint</summary>
-                  <p>Expected: {expected}</p>
-                  <p>You sent: {bio_hash}</p>
-                </details>
-                <a class="btn" href="/stage2">Back</a>
+                <h1>❌ Location Check Failed</h1>
+                <p class="muted">คุณอยู่นอกพื้นที่ที่กำหนด</p>
+                <div class="alert">
+                   <strong>Your Location Result:</strong>
+                   <p>ห่างจาก มทส. {dist:.2f} กม.</p>
+                   <p class="text-error">ต้องไม่เกิน {MAX_DISTANCE_KM} กม.</p>
+                </div>
+                <a class="btn" href="/stage2">Try Again</a>
               </div>
             </div>
             """,
-            subtitle="Biometric Verification Failed"
+            subtitle="Location Verification Failed"
         ), 403
     
     if 2 not in progress:
