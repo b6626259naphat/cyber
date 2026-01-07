@@ -1,9 +1,13 @@
 ติดตั้ง Library ที่จำเป็น:
 
-pip install -r requirements.txt บน/cyber
+รัน pip install -r requirements.txt 
+
+บนโฟลเดอร์ /cyber
 
 รันโปรแกรม:
 
-รัน python app.py บน โฟลเดอร์ /cyber
+รัน python app.py 
 
-ถ้า พอร์ท 5000 ถูกใช้แล้ว ให้เปลี่ยนพอร์ท ที่ cyber/app.py จาก5000 เป็นพอร์ทอื่น
+บนโฟลเดอร์ /cyber
+
+ถ้าพอร์ท 5000 ถูกใช้แล้ว ให้เปลี่ยนพอร์ท ที่ cyber/app.py จาก5000 เป็นพอร์ทอื่น
