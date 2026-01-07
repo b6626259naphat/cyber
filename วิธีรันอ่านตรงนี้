@@ -5,3 +5,5 @@ pip install -r requirements.txt บน/cyber
 รันโปรแกรม:
 
 รัน python app.py บน โฟลเดอร์ /cyber
+
+ถ้า พอร์ท 5000 ถูกใช้แล้ว ให้เปลี่ยนพอร์ท ที่ cyber/app.py จาก5000 เป็นพอร์ทอื่น
