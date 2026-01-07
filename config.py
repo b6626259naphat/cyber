@@ -37,15 +37,17 @@ STAGE2_PIN_QUESTIONS = [
         "hint": "ปริญญาตรี 4 ปี"
     },
     {
-        "question": "จำนวนอาคารเรียน F (Faculty Building) ทั้งหมดใน มทส.",
-        "answer": "12",
-        "hint": "มีอาคาร F1 ถึง F12"
+        "question": "ประตูเข้า มทส มีกี่ที่",
+        "answer": "4",
+        "hint": "มี 4 ประตู: ประตู 1 (ประตูหลัก), ประตู 2, ประตู 3, และประตู 4"
     }
 ]
 
 
 # Biometric Simulation: Pattern matching
-BIOMETRIC_PATTERN = "CPE:SUT:2023"  # ต้องสร้าง hash จาก pattern นี้
+# Location-based Verification
+SUT_COORDINATES = (14.882208, 102.021877)  # พิกัด มทส. (โดยประมาณ)
+MAX_DISTANCE_KM = 5.0  # รัศมีที่ยอมรับ (กิโลเมตร)
 
 # Progress tracking key
 STAGE2_PROGRESS_KEY = secrets.token_bytes(32)
