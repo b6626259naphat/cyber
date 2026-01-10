@@ -22,12 +22,12 @@ OTP_WINDOW_SECONDS = 30
 # PIN Challenge: คำถามสุ่มเกี่ยวกับ SUT และ Cyber Security (ตอบเป็นตัวเลข)
 STAGE2_PIN_QUESTIONS = [
     {
-        "question": "จงหาค่า 'Magic Number' ที่ซ่อนอยู่ใน HTTP Header ของหน้านี้",
-        "answer": "951753",
-        "hint": "Inspect Network -> Headers -> X-SUT-Magic"
+        "question": "จงหาค่า 'Magic Number'",
+        "answer": "2568",
+        "hint": "คำใบ้: จารึกโบราณ"
     }
 ]
-STAGE2_MAGIC_NUMBER = "951753"
+STAGE2_MAGIC_NUMBER = "2568"
 
 
 # Biometric Simulation: Pattern matching

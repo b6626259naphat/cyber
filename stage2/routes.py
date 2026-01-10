@@ -4,6 +4,7 @@ import time
 import hmac
 import hashlib
 import secrets
+from urllib.parse import quote
 from io import BytesIO
 import qrcode
 from flask import request, make_response, send_file, Blueprint
@@ -500,7 +501,8 @@ def index():
     </div>
     """
     resp = make_response(render_page("Stage 2 — 4-Layer MFA", body, subtitle="Advanced Authentication System"))
-    resp.headers["X-SUT-Magic"] = STAGE2_MAGIC_NUMBER
+    # Fix UnicodeEncodeError: Headers must be latin-1. URL encode the value if it has special chars.
+    resp.headers["X-SUT-Magic"] = quote(STAGE2_MAGIC_NUMBER)
     return resp
 
 # ===== Layer Handlers =====

@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import time
 import sys
+from urllib.parse import unquote
 
 # Configuration
 BASE_URL = "http://localhost:5001"
@@ -55,10 +56,13 @@ def main():
     # For now, let's just try to answer "correctly" by trying to parse.
     
     first_q_res = s.get(f"{BASE_URL}/stage2")
-    magic_num = first_q_res.headers.get("X-SUT-Magic")
-    if not magic_num:
+    magic_num_encoded = first_q_res.headers.get("X-SUT-Magic")
+    if not magic_num_encoded:
         fail("Could not find X-SUT-Magic header")
-    print(f"   Found Magic Number (Header): {magic_num}")
+    
+    magic_num = unquote(magic_num_encoded)
+    print(f"   Found Magic Number (Header Encoded): {magic_num_encoded}")
+    print(f"   Decoded Magic Number: {magic_num}")
     
     layer1_passed = False
     # Send Magic Number as PIN
