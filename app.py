@@ -50,4 +50,4 @@ def home():
     return render_page("The SUT Secret Server", body, subtitle="Cyber Lab Interface • Terminal / Neon Theme")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=True)

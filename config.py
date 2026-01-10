@@ -49,6 +49,11 @@ STAGE2_PIN_QUESTIONS = [
 SUT_COORDINATES = (14.882208, 102.021877)  # พิกัด มทส. (โดยประมาณ)
 MAX_DISTANCE_KM = 5.0  # รัศมีที่ยอมรับ (กิโลเมตร)
 
+# Biometric Configuration (Keystroke Dynamics)
+STAGE2_KEYSTROKE_TARGET_PHRASE = "SUT-CYBER-LAB-2026"
+STAGE2_KEYSTROKE_MIN_TIME_MS = 500   # Too fast = bot
+STAGE2_KEYSTROKE_MAX_TIME_MS = 10000 # Too slow = copy-paste/afk
+
 # Progress tracking key
 STAGE2_PROGRESS_KEY = secrets.token_bytes(32)
 

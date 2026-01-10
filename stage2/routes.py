@@ -11,7 +11,11 @@ from flask import request, make_response, send_file, Blueprint
 from config import (
     STAGE2_PASSWORD_PLAINTEXT, STAGE2_GATE_TTL_SECONDS, STAGE2_GATE_KEY,
     OTP_WINDOW_SECONDS, USERS,
-    STAGE2_PIN_QUESTIONS, SUT_COORDINATES, MAX_DISTANCE_KM, STAGE2_PROGRESS_KEY
+    OTP_WINDOW_SECONDS, USERS,
+    STAGE2_PIN_QUESTIONS, SUT_COORDINATES, MAX_DISTANCE_KM, STAGE2_PROGRESS_KEY,
+    OTP_WINDOW_SECONDS, USERS,
+    STAGE2_PIN_QUESTIONS, SUT_COORDINATES, MAX_DISTANCE_KM, STAGE2_PROGRESS_KEY,
+    STAGE2_KEYSTROKE_TARGET_PHRASE, STAGE2_KEYSTROKE_MIN_TIME_MS, STAGE2_KEYSTROKE_MAX_TIME_MS
 )
 from utils import render_page, b64url_encode, b64url_decode, new_session
 from . import stage2_bp
@@ -116,6 +120,24 @@ def verify_location(lat: float, lon: float) -> tuple[bool, float]:
     dist = haversine(lat, lon, target_lat, target_lon)
     return dist <= MAX_DISTANCE_KM, dist
 
+# ===== Layer 3: Biometric Verification (Keystroke Dynamics) =====
+def verify_keystroke(typed_phrase: str, duration_ms: float) -> tuple[bool, str]:
+    """
+    Verify keystroke dynamics:
+    1. Check if phrase matches target.
+    2. Check if duration is within human range.
+    """
+    if typed_phrase != STAGE2_KEYSTROKE_TARGET_PHRASE:
+        return False, "Phrase Mismatch"
+    
+    if duration_ms < STAGE2_KEYSTROKE_MIN_TIME_MS:
+        return False, f"Too Fast (Bot? {duration_ms}ms)"
+        
+    if duration_ms > STAGE2_KEYSTROKE_MAX_TIME_MS:
+        return False, f"Too Slow (Timeout? {duration_ms}ms)"
+        
+    return True, "OK"
+
 # ===== Layer 3: OTP =====
 def current_otp_code(seed: str, window: int = OTP_WINDOW_SECONDS) -> str:
     t = int(time.time() // window)
@@ -213,8 +235,9 @@ def index():
         <hr/>
         <div class="row">
           <span class="badge {'neon' if 1 in progress else ''}">{'✅' if 1 in progress else '🔒'} Layer 1: PIN</span>
-          <span class="badge {'neon' if 2 in progress else ''}">{'✅' if 2 in progress else '🔒'} Layer 2: Location</span>
-          <span class="badge {'neon' if 3 in progress else ''}">{'✅' if 3 in progress else '🔒'} Layer 3: OTP</span>
+          <span class="badge {'neon' if 2 in progress else ''}">{'✅' if 2 in progress else '🔒'} Layer 2: Biometric</span>
+          <span class="badge {'neon' if 3 in progress else ''}">{'✅' if 3 in progress else '🔒'} Layer 3: Location</span>
+          <span class="badge {'neon' if 4 in progress else ''}">{'✅' if 4 in progress else '🔒'} Layer 4: OTP</span>
         </div>
       </div>
 
@@ -238,8 +261,78 @@ def index():
         </form>
       </div>
 """
-    # Layer 2: Location Verification
+    # Layer 2: Biometric Verification
     elif 2 not in progress:
+        body += f"""
+      <div class="card">
+        <h2>👤 Layer 2 — Behavioral Biometrics</h2>
+        <p class="muted">Keystroke Dynamics Verification</p>
+        <div class="alert">
+          <strong>⌨️ Typing Challenge:</strong>
+          <p>พิมพ์ข้อความต่อไปนี้ให้ถูกต้อง (ห้าม Copy-Paste):</p>
+          <code style="font-size: 1.2em; color: #00ffd5;">{STAGE2_KEYSTROKE_TARGET_PHRASE}</code>
+        </div>
+        
+        <form id="bioForm" method="post" action="/stage2/layer_bio" onsubmit="return finalizeTyping()">
+          <input type="hidden" name="phrase" id="phraseInput" />
+          <input type="hidden" name="duration" id="durationInput" />
+          
+          <div style="margin: 1.5rem 0;">
+              <input type="text" id="typingArea" placeholder="Start typing here..." 
+                     autocomplete="off" onpaste="return false;" 
+                     style="text-align:center; font-family:monospace; letter-spacing:1px;" />
+          </div>
+          
+          <div style="text-align:center;">
+              <button class="btn" type="submit" id="submitBtn" disabled>Verifying...</button>
+          </div>
+        </form>
+
+        <script>
+        let startTime = 0;
+        let endTime = 0;
+        let started = false;
+        
+        const target = "{STAGE2_KEYSTROKE_TARGET_PHRASE}";
+        const input = document.getElementById('typingArea');
+        const btn = document.getElementById('submitBtn');
+        
+        input.addEventListener('keydown', (e) => {{
+            if (!started) {{
+                startTime = performance.now();
+                started = true;
+            }}
+        }});
+        
+        input.addEventListener('keyup', (e) => {{
+            const val = input.value;
+            if (val === target) {{
+                endTime = performance.now();
+                btn.disabled = false;
+                btn.textContent = "Submit Analysis";
+                btn.style.borderColor = "#00ffd5";
+                input.style.borderColor = "#00ffd5";
+            }} else {{
+                btn.disabled = true;
+                btn.textContent = "Processing...";
+                input.style.borderColor = "";
+            }}
+        }});
+        
+        function finalizeTyping() {{
+            if (!startTime || !endTime) return false;
+            
+            const duration = Math.round(endTime - startTime);
+            document.getElementById('phraseInput').value = input.value;
+            document.getElementById('durationInput').value = duration;
+            return true;
+        }}
+        </script>
+        
+      </div>
+"""
+    # Layer 3: Location Verification
+    elif 3 not in progress:
         body += f"""
       <div class="card">
         <h2>📍 Layer 2 — Location Verification</h2>
@@ -248,7 +341,7 @@ def index():
           <strong>📡 GPS Check:</strong>
           <p>ระบบจะขอเข้าถึงตำแหน่งของคุณเพื่อตรวจสอบว่าอยู่ในรัศมี {MAX_DISTANCE_KM} กม. จาก มทส. หรือไม่</p>
         </div>
-        <form id="locForm" method="post" action="/stage2/layer3">
+        <form id="locForm" method="post" action="/stage2/layer_loc">
           <input type="hidden" name="lat" id="latInput" />
           <input type="hidden" name="lon" id="lonInput" />
           <div id="statusMsg" class="muted" style="margin-bottom:1rem;">Click button to verify location...</div>
@@ -301,11 +394,11 @@ def index():
         </script>
       </div>
 """
-    # Layer 3: OTP (Final)
-    elif 3 not in progress:
+    # Layer 4: OTP (Final)
+    elif 4 not in progress:
         body += """
       <div class="card">
-        <h2>⏱️ Layer 3 — Time-based OTP (Final)</h2>
+        <h2>⏱️ Layer 4 — Time-based OTP (Final)</h2>
         <p class="muted">ขั้นตอนสุดท้าย: ยืนยันด้วย OTP</p>
         
         <!-- Countdown Timer -->
@@ -389,7 +482,7 @@ def index():
         body += """
       <div class="card">
         <h1>✅ All Layers Completed!</h1>
-        <p class="muted">คุณผ่านทุกขั้นตอนของ 3-Layer MFA แล้ว</p>
+        <p class="muted">คุณผ่านทุกขั้นตอนของ 4-Layer MFA แล้ว</p>
         <div class="row">
           <a class="btn" href="/stage3/ui">Go to Stage 3</a>
           <a class="btn secondary" href="/">Home</a>
@@ -400,7 +493,7 @@ def index():
     body += """
     </div>
     """
-    return render_page("Stage 2 — 3-Layer MFA", body, subtitle="Advanced Authentication System")
+    return render_page("Stage 2 — 4-Layer MFA", body, subtitle="Advanced Authentication System")
 
 # ===== Layer Handlers =====
 
@@ -432,14 +525,61 @@ def layer2_pin():
     resp.headers["Location"] = "/stage2"
     set_progress_cookie(resp, progress)
     return resp
-@stage2_bp.post('/stage2/layer3')
-def layer3_location():
+
+@stage2_bp.post('/stage2/layer_bio')
+def layer_bio():
     if not has_stage2_gate():
         return "Unauthorized", 401
     
     progress = get_progress()
     if 1 not in progress:
-        return "Complete Layer 1 first", 403
+         return "Complete Layer 1 first", 403
+
+    phrase = request.form.get("phrase", "")
+    duration_str = request.form.get("duration", "0")
+    
+    try:
+        duration = float(duration_str)
+    except ValueError:
+        duration = 0
+
+    is_valid, msg = verify_keystroke(phrase, duration)
+
+    if not is_valid:
+        return render_page(
+            "Layer 2 Failed",
+            f"""
+            <div class="grid">
+              <div class="card">
+                <h1>❌ Keystroke Analysis Failed</h1>
+                <p class="muted">Your typing behavior is suspicious.</p>
+                <div class="alert">
+                   <strong>Analysis Result:</strong>
+                   <p class="text-error">{msg}</p>
+                   <p>Duration: {duration}ms</p>
+                </div>
+                <a class="btn" href="/stage2">Try Again</a>
+              </div>
+            </div>
+            """,
+            subtitle="Behavioral Biometrics Failed"
+        ), 403
+
+    if 2 not in progress:
+        progress.append(2)
+    resp = make_response("", 302)
+    resp.headers["Location"] = "/stage2"
+    set_progress_cookie(resp, progress)
+    return resp
+
+@stage2_bp.post('/stage2/layer_loc')
+def layer3_location():
+    if not has_stage2_gate():
+        return "Unauthorized", 401
+    
+    progress = get_progress()
+    if 2 not in progress:
+        return "Complete Layer 1-2 first", 403
     
     try:
         # Try to get from hidden inputs first, else manual inputs
@@ -476,8 +616,8 @@ def layer3_location():
             subtitle="Location Verification Failed"
         ), 403
     
-    if 2 not in progress:
-        progress.append(2)
+    if 3 not in progress:
+        progress.append(3)
     resp = make_response("", 302)
     resp.headers["Location"] = "/stage2"
     set_progress_cookie(resp, progress)
@@ -498,8 +638,8 @@ def login():
         return "Stage 2 is locked. Unlock with Stage 1 password first.", 401
 
     progress = get_progress()
-    if 2 not in progress:
-        return "Complete all previous layers first (1-2)", 403
+    if 3 not in progress:
+        return "Complete all previous layers first (1-3)", 403
 
     username = request.form.get("username", "").strip()
     otp = request.form.get("otp", "").strip()
@@ -513,8 +653,8 @@ def login():
         return f"OTP invalid. (Expected: {expected} for debugging)", 403
 
     # ✅ All layers completed!
-    if 3 not in progress:
-        progress.append(3)
+    if 4 not in progress:
+        progress.append(4)
     
     sid = new_session(username)
     resp = make_response(render_page(
@@ -522,8 +662,8 @@ def login():
         """
         <div class="grid">
           <div class="card">
-            <h1>🎉 3-Layer Authentication Success!</h1>
-            <p class="muted">คุณผ่านทั้ง 3 layers: PIN → Biometric → OTP</p>
+            <h1>🎉 4-Layer Authentication Success!</h1>
+            <p class="muted">คุณผ่านทั้ง 4 layers: PIN → Biometric → Location → OTP</p>
             <hr/>
             <div class="row">
               <a class="btn" href="/stage3/ui">Go Stage 3 (Authorization Lab)</a>
