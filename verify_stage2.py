@@ -14,8 +14,11 @@ USERNAME = "fame"
 def step(name):
     print(f"\n[+] Testing: {name}")
 
-def fail(msg):
+def fail(msg, res=None):
     print(f"[-] FAILED: {msg}")
+    if res:
+        print(f"    Status Code: {res.status_code}")
+        print(f"    Response text preview: {res.text[:500]}...")
     sys.exit(1)
 
 def main():
@@ -36,10 +39,11 @@ def main():
     # 2. Check Initial State (Should ask for PIN)
     step("Check Initial State (Layer 1: PIN)")
     res = s.get(f"{BASE_URL}/stage2")
-    if "Layer 1: PIN" not in res.text or "Layer 2: Biometric" not in res.text:
-         fail("Page content missing expected layers")
-    if "Question:" not in res.text:
-         fail("PIN Question not found")
+    if "Layer 1: PIN" not in res.text:
+         print(f"DEBUG: Status={res.status_code}, Text[:200]={res.text[:200]}")
+         fail("Page content missing expected layers", res)
+    if "Challenge:" not in res.text:
+         fail("PIN Challenge not found")
     
     # Extract question (simple parsing or just brute force answer since we know logic)
     # The logic in routes.py checks against STAGE2_PIN_QUESTIONS.
@@ -50,20 +54,19 @@ def main():
     # Or I can cheat and just send the right answer if I can parse the question.
     # For now, let's just try to answer "correctly" by trying to parse.
     
-    q_start = res.text.find("<p>") # This is too generic
-    # Let's brute force the answers: 2, 9, 4. One of them must be right.
+    first_q_res = s.get(f"{BASE_URL}/stage2")
+    magic_num = first_q_res.headers.get("X-SUT-Magic")
+    if not magic_num:
+        fail("Could not find X-SUT-Magic header")
+    print(f"   Found Magic Number (Header): {magic_num}")
     
-    valid_answers = ["2", "4", "9"]
     layer1_passed = False
-    
-    for ans in valid_answers:
-        print(f"   Trying PIN Answer: {ans}")
-        res = s.post(f"{BASE_URL}/stage2/layer2", data={"pin": ans})
-        if res.status_code == 200: # We are redirected back to stage2 (200 OK after follow)
-            if "Layer 2: Behavioral Biometrics" in res.text or "Keystroke Dynamics" in res.text:
-                layer1_passed = True
-                print(f"   PIN {ans} accepted!")
-                break
+    # Send Magic Number as PIN
+    res = s.post(f"{BASE_URL}/stage2/layer2", data={"pin": magic_num})
+    if res.status_code == 200: 
+        if "Layer 2: Behavioral Biometrics" in res.text or "Keystroke Dynamics" in res.text:
+            layer1_passed = True
+            print(f"   PIN {magic_num} accepted!")
     
     if not layer1_passed:
         fail("Could not pass Layer 1 PIN challenge")

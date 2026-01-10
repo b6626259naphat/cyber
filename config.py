@@ -22,26 +22,12 @@ OTP_WINDOW_SECONDS = 30
 # PIN Challenge: คำถามสุ่มเกี่ยวกับ SUT และ Cyber Security (ตอบเป็นตัวเลข)
 STAGE2_PIN_QUESTIONS = [
     {
-        "question": "สีประจำมหาวิทยาลัยเทคโนโลยีสุรนารี มีกี่สี",
-        "answer": "2",
-        "hint": "ม่วงและส้ม เป็นสีประจำมหาวิทยาลัย"
-    },
-    {
-        "question": "จำนวนสำนักวิชา (Institute) ทั้งหมดใน มทส.",
-        "answer": "9",
-        "hint": "มี 9 สำนักวิชา: วิทยาศาสตร์, เทคโนโลยีสังคม, เทคโนโลยีการเกษตร, วิศวกรรมศาสตร์, แพทย์, พยาบาล, ทันตแพทย์, สาธารณสุข, ศาสตร์และศิลป์ดิจิทัล"
-    },
-    {
-        "question": "จำนวนปีการศึกษาของหลักสูตร CPE (ปกติ)",
-        "answer": "4",
-        "hint": "ปริญญาตรี 4 ปี"
-    },
-    {
-        "question": "ประตูเข้า มทส มีกี่ที่",
-        "answer": "4",
-        "hint": "มี 4 ประตู: ประตู 1 (ประตูหลัก), ประตู 2, ประตู 3, และประตู 4"
+        "question": "จงหาค่า 'Magic Number' ที่ซ่อนอยู่ใน HTTP Header ของหน้านี้",
+        "answer": "951753",
+        "hint": "Inspect Network -> Headers -> X-SUT-Magic"
     }
 ]
+STAGE2_MAGIC_NUMBER = "951753"
 
 
 # Biometric Simulation: Pattern matching

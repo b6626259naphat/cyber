@@ -15,7 +15,8 @@ from config import (
     STAGE2_PIN_QUESTIONS, SUT_COORDINATES, MAX_DISTANCE_KM, STAGE2_PROGRESS_KEY,
     OTP_WINDOW_SECONDS, USERS,
     STAGE2_PIN_QUESTIONS, SUT_COORDINATES, MAX_DISTANCE_KM, STAGE2_PROGRESS_KEY,
-    STAGE2_KEYSTROKE_TARGET_PHRASE, STAGE2_KEYSTROKE_MIN_TIME_MS, STAGE2_KEYSTROKE_MAX_TIME_MS
+    STAGE2_KEYSTROKE_TARGET_PHRASE, STAGE2_KEYSTROKE_MIN_TIME_MS, STAGE2_KEYSTROKE_MAX_TIME_MS,
+    STAGE2_MAGIC_NUMBER
 )
 from utils import render_page, b64url_encode, b64url_decode, new_session
 from . import stage2_bp
@@ -249,10 +250,11 @@ def index():
         body += f"""
       <div class="card">
         <h2>🧩 Layer 1 — PIN Challenge</h2>
-        <p class="muted">ตอบคำถามเพื่อยืนยันตัวตน (ตอบเป็นตัวเลข)</p>
+        <p class="muted">Find the secret PIN to continue.</p>
         <div class="alert">
-          <strong>❓ Question:</strong>
+          <strong>❓ Challenge:</strong>
           <p>{question['question']}</p>
+          <small class="muted">{question['hint']}</small>
         </div>
         <form method="post" action="/stage2/layer2">
           <label>Answer (ตัวเลขเท่านั้น)</label>
@@ -269,8 +271,9 @@ def index():
         <p class="muted">Keystroke Dynamics Verification</p>
         <div class="alert">
           <strong>⌨️ Typing Challenge:</strong>
-          <p>พิมพ์ข้อความต่อไปนี้ให้ถูกต้อง (ห้าม Copy-Paste):</p>
-          <code style="font-size: 1.2em; color: #00ffd5;">{STAGE2_KEYSTROKE_TARGET_PHRASE}</code>
+          <p>เปิด <code>Developer Console</code> เพื่อดูข้อความลับที่ต้องพิมพ์</p>
+          <p class="muted">Tips: Right Click -> Inspect -> Console</p>
+          <code style="font-size: 1.2em; color: #00ffd5; display:none;">{STAGE2_KEYSTROKE_TARGET_PHRASE}</code>
         </div>
         
         <form id="bioForm" method="post" action="/stage2/layer_bio" onsubmit="return finalizeTyping()">
@@ -289,6 +292,9 @@ def index():
         </form>
 
         <script>
+        // Secret for CTF Player
+        console.log("%c[SECRET PHRASE] The phrase is: {STAGE2_KEYSTROKE_TARGET_PHRASE}", "color: #00ffd5; font-size: 16px; font-weight: bold;");
+        
         let startTime = 0;
         let endTime = 0;
         let started = false;
@@ -493,7 +499,9 @@ def index():
     body += """
     </div>
     """
-    return render_page("Stage 2 — 4-Layer MFA", body, subtitle="Advanced Authentication System")
+    resp = make_response(render_page("Stage 2 — 4-Layer MFA", body, subtitle="Advanced Authentication System"))
+    resp.headers["X-SUT-Magic"] = STAGE2_MAGIC_NUMBER
+    return resp
 
 # ===== Layer Handlers =====
 
