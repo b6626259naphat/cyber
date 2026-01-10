@@ -23,11 +23,11 @@ OTP_WINDOW_SECONDS = 30
 STAGE2_PIN_QUESTIONS = [
     {
         "question": "จงหาค่า 'Magic Number'",
-        "answer": "2568",
-        "hint": "คำใบ้: จารึกโบราณ"
+        "answer": "234041",
+        "hint": "คำใบ้: เลขรหัสวิชา Cyber Security"
     }
 ]
-STAGE2_MAGIC_NUMBER = "2568"
+STAGE2_MAGIC_NUMBER = "234041"
 
 
 # Biometric Simulation: Pattern matching
