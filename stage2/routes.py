@@ -335,7 +335,7 @@ def index():
     elif 3 not in progress:
         body += f"""
       <div class="card">
-        <h2>📍 Layer 2 — Location Verification</h2>
+        <h2>📍 Layer 3 — Location Verification</h2>
         <p class="muted">ยืนยันว่าคุณอยู่ในพื้นที่ มหาวิทยาลัยเทคโนโลยีสุรนารี</p>
         <div class="alert">
           <strong>📡 GPS Check:</strong>
@@ -349,7 +349,7 @@ def index():
           
           <!-- Fallback for manual testing (optional) -->
           <details style="margin-top:1rem;">
-             <summary>Manual Input (Debug)</summary>
+             <summary>Manual Input</summary>
              <small class="muted">Use specific coordinates near SUT</small>
              <input name="manual_lat" placeholder="Latitude" style="margin-top:5px;"/>
              <input name="manual_lon" placeholder="Longitude" style="margin-top:5px;"/>
