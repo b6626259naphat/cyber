@@ -1,3 +1,5 @@
+# stage3/routes.py
+
 import json
 import time
 import hmac
@@ -65,6 +67,7 @@ def check_circuit_status(attrs: dict) -> dict:
     
     # --- BREAKER 1: RBAC OVERRIDE ---
     # Hint: TUFJTlRfT1ZFUlJJREU=  => Decode ได้ "MAINT_OVERRIDE"
+    # Octal: 115 101 111 116 124 137 117 126 105 122 122 111 104 105
     code1 = attrs.get("code_1", "").strip()
     if code1 == "MAINT_OVERRIDE":
         status["b1"] = True
@@ -74,6 +77,7 @@ def check_circuit_status(attrs: dict) -> dict:
 
     # --- BREAKER 2: MLS OVERRIDE ---
     # Hint: UEhZU0lDQUxfQUNDRVNT => Decode ได้ "PHYSICAL_ACCESS"
+    # Octal: 120 110 131 123 111 103 101 114 137 101 103 103 105 123 123
     code2 = attrs.get("code_2", "").strip()
     if code2 == "PHYSICAL_ACCESS":
         status["b2"] = True
@@ -83,6 +87,7 @@ def check_circuit_status(attrs: dict) -> dict:
 
     # --- BREAKER 3: MASTER SWITCH ---
     # Hint: Nzc4OA== => Decode ได้ "7788"
+    # Octal: 067 067 070 070
     code3 = attrs.get("code_3", "").strip()
     if code3 == "7788":
         status["b3"] = True
@@ -230,7 +235,7 @@ def ui():
         </div>
         <p class="muted">
            <b>Objective:</b> The security system has 3 layers. You must <b>DECODE</b> the bypass signal for each layer
-           to turn the lights GREEN and unlock the Master Switch.
+           (either from Base64 or Octal) to turn the lights GREEN and unlock the Master Switch.
         </p>
       </div>
 
@@ -261,6 +266,10 @@ def ui():
         <div style="text-align:center; margin:10px;">
             <span class="code-display">TUFJTlRfT1ZFUlJJREU=</span>
         </div>
+        <p class="muted" style="font-size:0.9em; margin-top:5px;">
+            OR Decode this <b>Octal (Base8)</b> sequence:<br>
+            <span class="code-display" style="font-size:0.85em; color:#f1c40f;">115 101 111 116 124 137 117 126 105 122 122 111 104 105</span>
+        </p>
         <input type="text" id="inp-c1" placeholder="Enter Decoded Text..." style="text-align:center;">
         
         <hr>
@@ -270,6 +279,10 @@ def ui():
         <div style="text-align:center; margin:10px;">
             <span class="code-display">UEhZU0lDQUxfQUNDRVNT</span>
         </div>
+        <p class="muted" style="font-size:0.9em; margin-top:5px;">
+            OR Decode this <b>Octal (Base8)</b> sequence:<br>
+            <span class="code-display" style="font-size:0.85em; color:#f1c40f;">120 110 131 123 111 103 101 114 137 101 103 103 105 123 123</span>
+        </p>
         <input type="text" id="inp-c2" placeholder="Enter Decoded Text..." style="text-align:center;">
       </div>
 
@@ -279,6 +292,10 @@ def ui():
         <div style="text-align:center; margin:10px;">
             <span class="code-display">Nzc4OA==</span>
         </div>
+        <p class="muted" style="font-size:0.9em; margin-top:5px;">
+            OR Decode this <b>Octal (Base8)</b> sequence:<br>
+            <span class="code-display" style="font-size:0.85em; color:#f1c40f;">067 067 070 070</span>
+        </p>
         <input type="text" id="inp-c3" placeholder="Enter Decoded PIN..." style="text-align:center; letter-spacing:5px; font-size:1.2em;">
         
         <div style="margin-top:20px;">
