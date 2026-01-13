@@ -354,14 +354,7 @@ def index():
           <div id="statusMsg" class="muted" style="margin-bottom:1rem;">Click button to verify location...</div>
           <button class="btn" type="button" onclick="getLocation()">📍 Check My Location</button>
           
-          <!-- Fallback for manual testing (optional) -->
-          <details style="margin-top:1rem;">
-             <summary>Manual Input</summary>
-             <small class="muted">Use specific coordinates near SUT</small>
-             <input name="manual_lat" placeholder="Latitude" style="margin-top:5px;"/>
-             <input name="manual_lon" placeholder="Longitude" style="margin-top:5px;"/>
-             <button class="btn secondary" type="submit">Submit Manual</button>
-          </details>
+
         </form>
         
         <script>
@@ -429,7 +422,7 @@ def index():
               <input name="otp" id="otp-input" placeholder="000000" maxlength="6" autofocus />
               <button class="btn" type="submit">Complete Authentication</button>
             </form>
-            <small class="muted">หรือคำนวณ OTP ด้วย HMAC (seed: server-room-sut-2026, window: 30s)</small>
+
           </div>
         </div>
       </div>
